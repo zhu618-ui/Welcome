@@ -89,17 +89,17 @@ if not st.session_state.user_id:
             st.title("🔐 基金资产管家 Pro")
             st.markdown("---")
             user_input = st.text_input("请输入 ID / 昵称", placeholder="例如：zhu618")
-            
+
             # 🔥 修复核心1：登录瞬间同时完成 ID 设置和数据加载
             if st.button("🚀 进入系统", use_container_width=True, type="primary"):
                 if user_input:
                     st.session_state.user_id = user_input
                     st.session_state.data = load_data(user_input)
                     st.rerun()
-            
+
             st.markdown("---")
             st.caption("Designed by 抖音：绿豆生北国 (ID:32053858729)")
-    
+
     # 强制停止
     st.stop()
 
@@ -162,7 +162,8 @@ if holdings:
                 "今日涨幅(%)": f"{zhangfu:+.2f}%",
                 "今日收益": day_profit,
                 "持有收益": market_val - cost,
-                "持有收益率": (market_val - cost) / cost * 100 if cost > 0 else 0
+                "持有收益率": (market_val - cost) / cost * 100 if cost > 0 else 0,
+                "更新时间": real_data['更新时间']
             })
 
 total_profit_all = total_assets - total_cost
@@ -174,6 +175,43 @@ if total_assets > 0:
         st.session_state.data['asset_history'][today_str] = total_assets
         save_data(current_user, st.session_state.data)
 
+
+# --- 新增：删除持仓基金的函数 ---
+def delete_holding_fund(fund_code_to_delete):
+    if fund_code_to_delete in st.session_state.data['holdings']:
+        fund_details = st.session_state.data['holdings'][fund_code_to_delete]
+
+        # 获取实时数据以记录清仓时的市值和份额
+        real_data = fund_core.get_fund_real_time_value(fund_code_to_delete)
+
+        if real_data:
+            current_price = float(real_data['实时估算值'])
+            current_market_value = fund_details['shares'] * current_price
+
+            # 记录“清仓”交易
+            rec = {
+                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "type": "清仓",  # 明确标记为清仓操作
+                "code": fund_code_to_delete,
+                "name": fund_details['name'],
+                "amount": current_market_value,  # 记录清仓时的市值
+                "shares": fund_details['shares']  # 记录清仓时的份额
+            }
+            st.session_state.data['transactions'].insert(0, rec)
+
+            # 从持仓中移除基金
+            del st.session_state.data['holdings'][fund_code_to_delete]
+
+            save_data(current_user, st.session_state.data)
+            st.success(f"基金 {fund_details['name']} ({fund_code_to_delete}) 已清仓并记录。")
+            time.sleep(1)  # 暂停1秒让用户看到成功消息
+            st.rerun()
+        else:
+            st.error(f"无法获取基金 {fund_code_to_delete} 的实时数据，清仓失败。")
+    else:
+        st.warning(f"基金 {fund_code_to_delete} 不在持仓中。")
+
+
 # --- 5. 侧边栏 ---
 with st.sidebar:
     st.header("💰 基金资产管家 Pro")
@@ -182,7 +220,8 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("##### 功能导航")
-    page = st.radio("功能导航", ["🏠 资产看板", "📝 交易明细", "🚀 深度分析 & 交易"], label_visibility="collapsed")
+    # 侧边栏导航名称修改，更符合“添加持仓”的语境
+    page = st.radio("功能导航", ["🏠 资产看板", "📝 交易明细", "🚀 添加持仓 & 交易"], label_visibility="collapsed")
 
     st.markdown("---")
 
@@ -197,7 +236,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.warning("⚠️ 数据管理")
-    if st.button("🗑️ 清空数据", use_container_width=True):
+    if st.button("🗑️ 清空所有数据", use_container_width=True):  # 按钮文本修改，避免与单只基金删除混淆
         if os.path.exists(get_data_file_path(current_user)):
             os.remove(get_data_file_path(current_user))
         st.session_state.data = {"holdings": {}, "transactions": [], "asset_history": {}}
@@ -248,21 +287,55 @@ if page == "🏠 资产看板":
 
     st.markdown("**📋 持仓明细**")
     if holdings_list:
-        df = pd.DataFrame(holdings_list)
-        df.insert(0, '序号', range(1, 1 + len(df)))
-        view_df = df[["序号", "名称", "投入本金", "当前市值", "今日涨幅(%)", "今日收益", "持有收益", "持有收益率"]]
+        # 定义列宽，以适应新的“操作”列
+        # 序号, 名称, 投入本金, 当前市值, 今日涨幅(%), 今日收益, 持有收益, 更新时间, 操作
+        col_widths = [0.5, 2, 1.2, 1.2, 1, 1.2, 1.2, 1.5, 0.8]
+        cols_header = st.columns(col_widths)
+        headers = ["序号", "名称", "投入本金", "当前市值", "今日涨幅", "今日收益", "持有收益", "更新时间", "操作"]
+        for i, header in enumerate(headers):
+            with cols_header[i]:
+                st.markdown(f"**{header}**")
+        st.markdown("---")  # 分隔线
 
-        def highlight(val):
-            color = 'red' if val > 0 else 'green'
-            if val == 0: color = 'black'
-            return f'color: {color}; font-weight: bold'
+        for idx, fund_item in enumerate(holdings_list):
+            cols_data = st.columns(col_widths)
 
-        styled_df = view_df.style \
-            .map(highlight, subset=["今日收益", "持有收益", "持有收益率"]) \
-            .map(lambda x: highlight(float(x.replace('%', ''))), subset=["今日涨幅(%)"]) \
-            .format("{:,.2f}", subset=["投入本金", "当前市值", "今日收益", "持有收益"]) \
-            .format("{:+.2f}%", subset=["持有收益率"])
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            # 颜色逻辑：涨红跌绿
+            today_change_pct_val = float(fund_item['今日涨幅(%)'].replace('%', ''))
+            today_profit_val = fund_item['今日收益']
+            holding_profit_val = fund_item['持有收益']
+
+            color_today_change = 'red' if today_change_pct_val > 0 else 'green' if today_change_pct_val < 0 else 'black'
+            color_today_profit = 'red' if today_profit_val > 0 else 'green' if today_profit_val < 0 else 'black'
+            color_holding_profit = 'red' if holding_profit_val > 0 else 'green' if holding_profit_val < 0 else 'black'
+
+            with cols_data[0]:
+                st.write(idx + 1)
+            with cols_data[1]:
+                st.write(fund_item['名称'])
+            with cols_data[2]:
+                st.write(f"{fund_item['投入本金']:,.2f}")
+            with cols_data[3]:
+                st.write(f"{fund_item['当前市值']:,.2f}")
+            with cols_data[4]:
+                st.markdown(
+                    f"<span style='color:{color_today_change}; font-weight:bold;'>{fund_item['今日涨幅(%)']}</span>",
+                    unsafe_allow_html=True)
+            with cols_data[5]:
+                st.markdown(
+                    f"<span style='color:{color_today_profit}; font-weight:bold;'>{fund_item['今日收益']:+,.2f}</span>",
+                    unsafe_allow_html=True)
+            with cols_data[6]:
+                st.markdown(
+                    f"<span style='color:{color_holding_profit}; font-weight:bold;'>{fund_item['持有收益']:+,.2f}</span>",
+                    unsafe_allow_html=True)
+            with cols_data[7]:
+                st.write(fund_item['更新时间'])
+            with cols_data[8]:
+                # 添加删除按钮，使用 on_click 和 args 传递参数，确保每次点击都能触发
+                st.button("删除", key=f"delete_btn_{fund_item['代码']}", on_click=delete_holding_fund,
+                          args=(fund_item['代码'],))
+
     else:
         st.caption("暂无持仓")
 
@@ -282,7 +355,8 @@ elif page == "📝 交易明细":
         st.info("暂无交易记录")
 
 # ================= 页面 3: 深度分析 & 交易 =================
-elif page == "🚀 深度分析 & 交易":
+# 页面名称修改，更符合“添加持仓”的语境
+elif page == "🚀 添加持仓 & 交易":
     st.title("深度分析 & 交易柜台")
 
     col_left, col_right = st.columns([1, 2])
@@ -305,27 +379,82 @@ elif page == "🚀 深度分析 & 交易":
 
             st.divider()
 
-            op_tab1, op_tab2 = st.tabs(["🔴 买入", "🟢 卖出"])
+            op_tab1, op_tab2 = st.tabs(["🔴 买入/调整持仓", "🟢 卖出"]) # 标签页名称修改
 
             with op_tab1:
-                buy_money = st.number_input("买入金额", step=100.0, key="buy_input")
-                if st.button("确认买入", use_container_width=True, type="primary"):
-                    if fund_info and buy_money > 0:
-                        price = float(fund_info['实时估算值'])
-                        shares = buy_money / price
-                        name = fund_info['名称']
-                        if search_code in st.session_state.data['holdings']:
-                            st.session_state.data['holdings'][search_code]['shares'] += shares
-                            st.session_state.data['holdings'][search_code]['cost'] += buy_money
-                        else:
-                            st.session_state.data['holdings'][search_code] = {'name': name, 'shares': shares,
-                                                                              'cost': buy_money}
+                buy_money = st.number_input("本次买入金额", step=100.0, min_value=0.0, key="buy_input")
+                # 新增提示信息
+                st.caption("💡 如果您只是想录入已有的持仓，本次买入金额可输入 0。")
 
-                        rec = {"time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "type": "买入",
-                               "code": search_code, "name": name, "amount": buy_money}
-                        st.session_state.data['transactions'].insert(0, rec)
+                # --- 新增：已持有本金和已持有收益输入框 ---
+                initial_principal_default = 0.0
+                initial_profit_default = 0.0
+
+                # 如果基金已在持仓中，预填充其当前本金和收益
+                if search_code in st.session_state.data['holdings'] and fund_info:
+                    current_fund_holding = st.session_state.data['holdings'][search_code]
+                    current_price = float(fund_info['实时估算值'])
+
+                    initial_principal_default = current_fund_holding['cost']
+                    # 只有当当前价格大于0时，才能计算当前市值和收益，避免除零错误
+                    if current_price > 0:
+                        current_market_value = current_fund_holding['shares'] * current_price
+                        initial_profit_default = current_market_value - current_fund_holding['cost']
+                    else:
+                        initial_profit_default = 0.0  # 如果价格为0，则收益也视为0
+
+                input_original_principal = st.number_input(
+                    "本次买入前，该基金已持有本金 (买入的本金)",
+                    value=initial_principal_default,
+                    min_value=0.0,
+                    key=f"input_original_principal_{search_code}"
+                )
+                input_existing_profit = st.number_input(
+                    "本次买入前，该基金已持有收益 (亏损就是负数)",
+                    value=initial_profit_default,
+                    key=f"input_existing_profit_{search_code}"
+                )
+                # --- 新增输入框结束 ---
+
+                if st.button("确认操作", use_container_width=True, type="primary"): # 按钮文本修改
+                    if not fund_info:
+                        st.error("请先输入正确的基金代码并查询。")
+                    elif buy_money < 0: # 理论上 min_value=0 已经避免了，但作为安全检查
+                        st.warning("买入金额不能小于0。")
+                    else: # fund_info is valid and buy_money >= 0
+                        price = float(fund_info['实时估算值'])
+                        name = fund_info['名称']
+
+                        # 计算本次买入的份额
+                        new_shares_from_buy = buy_money / price if price > 0 else 0.0
+
+                        # 根据用户输入或默认值确定本次买入前的基金状态
+                        base_cost_for_fund = input_original_principal
+                        # 从本金和收益反推本次买入前的总市值，再计算总份额
+                        base_market_value_for_fund = input_original_principal + input_existing_profit
+                        base_shares_for_fund = base_market_value_for_fund / price if price > 0 else 0.0
+
+                        # 计算本次买入后的最终总份额和总成本
+                        final_shares = base_shares_for_fund + new_shares_from_buy
+                        final_cost = base_cost_for_fund + buy_money
+
+                        # 更新持仓数据
+                        st.session_state.data['holdings'][search_code] = {
+                            'name': name,
+                            'shares': final_shares,
+                            'cost': final_cost
+                        }
+
+                        # 只有当实际有买入金额时才记录为“买入”交易
+                        if buy_money > 0:
+                            rec = {"time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "type": "买入",
+                                   "code": search_code, "name": name, "amount": buy_money}
+                            st.session_state.data['transactions'].insert(0, rec)
+                            st.success(f"买入成功！基金 {name} ({search_code}) 已更新。")
+                        else: # buy_money == 0, 视为持仓调整
+                            st.success(f"基金 {name} ({search_code}) 持仓数据已调整。")
+
                         save_data(current_user, st.session_state.data)
-                        st.success(f"买入成功！")
                         time.sleep(1)
                         st.rerun()
 
@@ -355,7 +484,7 @@ elif page == "🚀 深度分析 & 交易":
 
                     if st.button("确认卖出", use_container_width=True):
                         if sell_shares > 0:
-                            cost_reduce = curr['cost'] * (sell_shares / curr['shares'])
+                            cost_reduce = curr['cost'] * (sell_shares / curr['shares']) if curr['shares'] > 0 else 0
                             curr['shares'] -= sell_shares
                             curr['cost'] -= cost_reduce
                             if curr['shares'] < 0.01: del st.session_state.data['holdings'][sell_code_select]
@@ -367,6 +496,8 @@ elif page == "🚀 深度分析 & 交易":
                             st.success("卖出成功！")
                             time.sleep(1)
                             st.rerun()
+                        else:
+                            st.warning("卖出份额或金额必须大于0。")
                 else:
                     st.warning("暂无持仓可卖")
 
@@ -398,10 +529,12 @@ elif page == "🚀 深度分析 & 交易":
                     display_df['FSRQ_STR'] = display_df['FSRQ'].dt.strftime('%Y-%m-%d')
                     show_df = display_df.sort_values('FSRQ', ascending=False)[['FSRQ_STR', '涨跌幅', 'DWJZ']]
 
+
                     def color_v(val):
                         c = 'red' if val > 0 else 'green'
                         if val == 0: c = 'black'
                         return f'color: {c}; font-weight: bold'
+
 
                     st.dataframe(
                         show_df.style.map(color_v, subset=['涨跌幅']).format("{:+.2f}%", subset=['涨跌幅']).format(
