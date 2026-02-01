@@ -16,20 +16,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS美化 (电脑端经典 + 手机端适配)
+# CSS美化
 st.markdown("""
     <style>
-        /* ================= 电脑端默认样式 (保持原样) ================= */
         .block-container { padding-top: 2rem; padding-bottom: 3rem; }
-
         .brand-footer {
             text-align: center; color: #aaa; font-size: 13px;
             margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee;
         }
-
         .big-rate-up { color: #e63946; font-size: 28px; font-weight: bold; }
         .big-rate-down { color: #28a745; font-size: 28px; font-weight: bold; }
-
         .status-badge {
             background-color: #fff; color: #555; padding: 5px 15px; border-radius: 20px;
             font-size: 13px; font-weight: 600; border: 1px solid #eee;
@@ -39,28 +35,12 @@ st.markdown("""
             height: 8px; width: 8px; background-color: #28a745;
             border-radius: 50%; display: inline-block; margin-right: 6px;
         }
-
         [data-testid="stSidebarNav"] { display: none; }
-
-        /* ================= 📱 手机端专属适配 (Media Query) ================= */
         @media only screen and (max-width: 600px) {
-            /* 1. 缩小顶部间距，手机寸土寸金 */
-            .block-container { 
-                padding-top: 1rem !important; 
-                padding-left: 0.5rem !important; 
-                padding-right: 0.5rem !important;
-            }
-
-            /* 2. 标题字号调小，防止换行 */
+            .block-container { padding-top: 1rem !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important;}
             h1 { font-size: 1.5rem !important; }
-
-            /* 3. 涨跌幅大数字调小 */
             .big-rate-up, .big-rate-down { font-size: 22px !important; }
-
-            /* 4. 调整底部水印间距 */
             .brand-footer { margin-top: 30px; }
-
-            /* 5. 隐藏侧边栏的某些大留白 */
             section[data-testid="stSidebar"] { width: 100% !important; }
         }
     </style>
@@ -69,7 +49,8 @@ st.markdown("""
 
 # --- 2. 多用户数据管理系统 ---
 def get_data_file_path(username):
-    return f"fund_data_{username}.json"
+    safe_name = username if username else "unknown"
+    return f"fund_data_{safe_name}.json"
 
 
 def load_data(username):
@@ -87,6 +68,7 @@ def load_data(username):
 
 
 def save_data(username, data):
+    if not username: return
     file_path = get_data_file_path(username)
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -95,7 +77,7 @@ def save_data(username, data):
         st.error(f"保存失败: {e}")
 
 
-# --- 3. 登录逻辑 ---
+# --- 3. 登录逻辑 (修复版) ---
 if 'user_id' not in st.session_state:
     st.session_state.user_id = None
 
@@ -107,17 +89,25 @@ if not st.session_state.user_id:
             st.title("🔐 基金资产管家 Pro")
             st.markdown("---")
             user_input = st.text_input("请输入 ID / 昵称", placeholder="例如：zhu618")
+            
+            # 🔥 修复核心1：登录瞬间同时完成 ID 设置和数据加载
             if st.button("🚀 进入系统", use_container_width=True, type="primary"):
                 if user_input:
                     st.session_state.user_id = user_input
+                    st.session_state.data = load_data(user_input)
                     st.rerun()
+            
             st.markdown("---")
             st.caption("Designed by 抖音：绿豆生北国 (ID:32053858729)")
+    
+    # 强制停止
     st.stop()
 
 # --- 4. 数据加载与核心计算 ---
 current_user = st.session_state.user_id
-if 'data' not in st.session_state:
+
+# 🔥 修复核心2：双重保险
+if 'data' not in st.session_state or st.session_state.data is None:
     st.session_state.data = load_data(current_user)
 
 
@@ -148,7 +138,9 @@ today_profit = 0.0
 holdings_list = []
 latest_update_time = "等待刷新..."
 
-holdings = st.session_state.data['holdings']
+# 🔥 修复核心3：安全读取 .get()
+holdings = st.session_state.data.get('holdings', {})
+
 if holdings:
     for code, info in holdings.items():
         real_data = fund_core.get_fund_real_time_value(code)
@@ -164,7 +156,7 @@ if holdings:
             today_profit += day_profit
             holdings_list.append({
                 "代码": code,
-                "名称": f"{info['name']} ({code})",  # 电脑端保留完整信息
+                "名称": f"{info['name']} ({code})",
                 "投入本金": cost,
                 "当前市值": market_val,
                 "今日涨幅(%)": f"{zhangfu:+.2f}%",
@@ -178,8 +170,9 @@ total_rate = (total_profit_all / total_cost * 100) if total_cost > 0 else 0.0
 
 today_str = datetime.datetime.now().strftime("%Y-%m-%d")
 if total_assets > 0:
-    st.session_state.data['asset_history'][today_str] = total_assets
-    save_data(current_user, st.session_state.data)
+    if st.session_state.data is not None:
+        st.session_state.data['asset_history'][today_str] = total_assets
+        save_data(current_user, st.session_state.data)
 
 # --- 5. 侧边栏 ---
 with st.sidebar:
@@ -211,9 +204,9 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
+    # 🔥 修复核心4：核弹级退出
     if st.button("🚪 退出登录", use_container_width=True):
-        st.session_state.user_id = None
-        st.session_state.data = None
+        st.session_state.clear()
         st.rerun()
 
 # --- 6. 页面逻辑 ---
@@ -229,7 +222,6 @@ if page == "🏠 资产看板":
                 f'<div style="text-align:right; padding-top:15px;"><span class="status-badge"><span class="status-dot"></span>更新: {latest_update_time}</span></div>',
                 unsafe_allow_html=True)
 
-    # 电脑端：一行4个；手机端：自动堆叠为4行
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("总资产", f"{total_assets:,.2f}")
@@ -243,27 +235,27 @@ if page == "🏠 资产看板":
     st.divider()
 
     st.markdown("**📈 财富净值走势**")
-    history_data = st.session_state.data['asset_history']
-    if len(history_data) > 1:
-        chart_df = pd.DataFrame(list(history_data.items()), columns=['日期', '总资产'])
-        chart_df['日期'] = pd.to_datetime(chart_df['日期'])
-        st.line_chart(chart_df.set_index('日期'), color="#e63946")
+    if st.session_state.data and 'asset_history' in st.session_state.data:
+        history_data = st.session_state.data['asset_history']
+        if len(history_data) > 1:
+            chart_df = pd.DataFrame(list(history_data.items()), columns=['日期', '总资产'])
+            chart_df['日期'] = pd.to_datetime(chart_df['日期'])
+            st.line_chart(chart_df.set_index('日期'), color="#e63946")
+        else:
+            st.info("📊 暂无历史数据")
     else:
         st.info("📊 暂无历史数据")
 
     st.markdown("**📋 持仓明细**")
     if holdings_list:
-        # 保持完整列，手机端 Streamlit 会自动提供横向滚动条
         df = pd.DataFrame(holdings_list)
         df.insert(0, '序号', range(1, 1 + len(df)))
         view_df = df[["序号", "名称", "投入本金", "当前市值", "今日涨幅(%)", "今日收益", "持有收益", "持有收益率"]]
-
 
         def highlight(val):
             color = 'red' if val > 0 else 'green'
             if val == 0: color = 'black'
             return f'color: {color}; font-weight: bold'
-
 
         styled_df = view_df.style \
             .map(highlight, subset=["今日收益", "持有收益", "持有收益率"]) \
@@ -281,7 +273,7 @@ if page == "🏠 资产看板":
 # ================= 页面 2: 交易明细 =================
 elif page == "📝 交易明细":
     st.title("交易流水账本")
-    if st.session_state.data['transactions']:
+    if st.session_state.data and st.session_state.data.get('transactions'):
         trans_df = pd.DataFrame(st.session_state.data['transactions'])
         filter_code = st.text_input("🔍 搜索交易记录", key="history_search")
         if filter_code: trans_df = trans_df[trans_df['code'].str.contains(filter_code)]
@@ -293,7 +285,6 @@ elif page == "📝 交易明细":
 elif page == "🚀 深度分析 & 交易":
     st.title("深度分析 & 交易柜台")
 
-    # 电脑端：左右布局；手机端：自动上下堆叠
     col_left, col_right = st.columns([1, 2])
 
     with col_left:
@@ -339,7 +330,11 @@ elif page == "🚀 深度分析 & 交易":
                         st.rerun()
 
             with op_tab2:
-                my_codes = list(st.session_state.data['holdings'].keys())
+                if st.session_state.data and 'holdings' in st.session_state.data:
+                    my_codes = list(st.session_state.data['holdings'].keys())
+                else:
+                    my_codes = []
+
                 if my_codes:
                     sell_code_select = st.selectbox("选择持仓", my_codes, key="sell_select")
                     curr = st.session_state.data['holdings'][sell_code_select]
@@ -403,12 +398,10 @@ elif page == "🚀 深度分析 & 交易":
                     display_df['FSRQ_STR'] = display_df['FSRQ'].dt.strftime('%Y-%m-%d')
                     show_df = display_df.sort_values('FSRQ', ascending=False)[['FSRQ_STR', '涨跌幅', 'DWJZ']]
 
-
                     def color_v(val):
                         c = 'red' if val > 0 else 'green'
                         if val == 0: c = 'black'
                         return f'color: {c}; font-weight: bold'
-
 
                     st.dataframe(
                         show_df.style.map(color_v, subset=['涨跌幅']).format("{:+.2f}%", subset=['涨跌幅']).format(
