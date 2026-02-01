@@ -8,44 +8,66 @@ import requests
 import time
 import fund_core  # 复用核心代码
 
-# --- 1. 页面配置 (针对移动端优化) ---
+# --- 1. 页面配置 (保持宽屏) ---
 st.set_page_config(
     page_title="基金资产管家 Pro",
     page_icon="💰",
-    layout="wide",  # 虽然是wide，但我们会用代码控制手机端显示
-    initial_sidebar_state="auto"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# CSS美化 (手机端适配 + 品牌展示)
+# CSS美化 (电脑端经典 + 手机端适配)
 st.markdown("""
     <style>
-        /* 手机端字体优化 */
-        .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-        h1 { font-size: 1.8rem !important; }
+        /* ================= 电脑端默认样式 (保持原样) ================= */
+        .block-container { padding-top: 2rem; padding-bottom: 3rem; }
 
-        /* 品牌水印 */
-        .brand-watermark {
-            color: #ccc; font-size: 0.8rem; text-align: center; margin-top: 20px;
+        .brand-footer {
+            text-align: center; color: #aaa; font-size: 13px;
+            margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee;
         }
 
-        /* 状态徽章 */
+        .big-rate-up { color: #e63946; font-size: 28px; font-weight: bold; }
+        .big-rate-down { color: #28a745; font-size: 28px; font-weight: bold; }
+
         .status-badge {
-            background-color: #f0f2f6; color: #555; padding: 4px 12px; border-radius: 20px;
-            font-size: 12px; font-weight: 600; border: 1px solid #ddd;
+            background-color: #fff; color: #555; padding: 5px 15px; border-radius: 20px;
+            font-size: 13px; font-weight: 600; border: 1px solid #eee;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .status-dot {
+            height: 8px; width: 8px; background-color: #28a745;
+            border-radius: 50%; display: inline-block; margin-right: 6px;
         }
 
-        /* 涨跌幅大数字 */
-        .big-rate-up { color: #e63946; font-size: 24px; font-weight: bold; }
-        .big-rate-down { color: #28a745; font-size: 24px; font-weight: bold; }
-
-        /* 隐藏默认导航，防止误触 */
         [data-testid="stSidebarNav"] { display: none; }
+
+        /* ================= 📱 手机端专属适配 (Media Query) ================= */
+        @media only screen and (max-width: 600px) {
+            /* 1. 缩小顶部间距，手机寸土寸金 */
+            .block-container { 
+                padding-top: 1rem !important; 
+                padding-left: 0.5rem !important; 
+                padding-right: 0.5rem !important;
+            }
+
+            /* 2. 标题字号调小，防止换行 */
+            h1 { font-size: 1.5rem !important; }
+
+            /* 3. 涨跌幅大数字调小 */
+            .big-rate-up, .big-rate-down { font-size: 22px !important; }
+
+            /* 4. 调整底部水印间距 */
+            .brand-footer { margin-top: 30px; }
+
+            /* 5. 隐藏侧边栏的某些大留白 */
+            section[data-testid="stSidebar"] { width: 100% !important; }
+        }
     </style>
 """, unsafe_allow_html=True)
 
 
 # --- 2. 多用户数据管理系统 ---
-# 这里的逻辑是：文件名 = fund_data_{用户名}.json
 def get_data_file_path(username):
     return f"fund_data_{username}.json"
 
@@ -77,33 +99,29 @@ def save_data(username, data):
 if 'user_id' not in st.session_state:
     st.session_state.user_id = None
 
-# 如果未登录，显示登录页
 if not st.session_state.user_id:
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.title("🔐 基金资产管家 Pro")
-        st.info("👋 欢迎！请输入您的专属 ID 以访问资产。")
-        user_input = st.text_input("请输入 ID / 手机号 / 昵称", placeholder="例如：zhu618")
+    c1, c2, c3 = st.columns([1, 1.5, 1])
+    with c2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.title("🔐 基金资产管家 Pro")
+            st.markdown("---")
+            user_input = st.text_input("请输入 ID / 昵称", placeholder="例如：zhu618")
+            if st.button("🚀 进入系统", use_container_width=True, type="primary"):
+                if user_input:
+                    st.session_state.user_id = user_input
+                    st.rerun()
+            st.markdown("---")
+            st.caption("Designed by 抖音：绿豆生北国 (ID:32053858729)")
+    st.stop()
 
-        if st.button("🚀 进入系统", use_container_width=True, type="primary"):
-            if user_input:
-                st.session_state.user_id = user_input
-                st.rerun()
-            else:
-                st.warning("ID 不能为空")
-
-        st.markdown("---")
-        st.caption("网页归抖音：**绿豆生北国**（id:32053858729）所有")
-    st.stop()  # 停止执行后面的代码，直到登录
-
-# --- 4. 已登录：加载用户数据 ---
+# --- 4. 数据加载与核心计算 ---
 current_user = st.session_state.user_id
 if 'data' not in st.session_state:
     st.session_state.data = load_data(current_user)
 
 
-# --- 5. 核心计算 (复用逻辑) ---
-@st.cache_data(ttl=300)  # 缓存时间改为5分钟，节省资源
+@st.cache_data(ttl=300)
 def get_fund_history_data(code, days=30):
     try:
         page_size = days + 20
@@ -146,28 +164,51 @@ if holdings:
             today_profit += day_profit
             holdings_list.append({
                 "代码": code,
-                "名称": info['name'],  # 手机端精简，不显示代码在名称里
-                "成本": cost,
-                "市值": market_val,
-                "涨幅": f"{zhangfu:+.2f}%",
-                "今日": day_profit,
-                "总收益": market_val - cost,
-                "收益率": (market_val - cost) / cost * 100 if cost > 0 else 0
+                "名称": f"{info['name']} ({code})",  # 电脑端保留完整信息
+                "投入本金": cost,
+                "当前市值": market_val,
+                "今日涨幅(%)": f"{zhangfu:+.2f}%",
+                "今日收益": day_profit,
+                "持有收益": market_val - cost,
+                "持有收益率": (market_val - cost) / cost * 100 if cost > 0 else 0
             })
+
+total_profit_all = total_assets - total_cost
+total_rate = (total_profit_all / total_cost * 100) if total_cost > 0 else 0.0
 
 today_str = datetime.datetime.now().strftime("%Y-%m-%d")
 if total_assets > 0:
     st.session_state.data['asset_history'][today_str] = total_assets
     save_data(current_user, st.session_state.data)
 
-# --- 6. 侧边栏 (包含登出功能) ---
+# --- 5. 侧边栏 ---
 with st.sidebar:
-    st.title("💰 资产管家 Pro")
+    st.header("💰 基金资产管家 Pro")
+    st.caption("Designed by 绿豆生北国")
     st.caption(f"当前用户: **{current_user}**")
-    st.caption("抖音号: 32053858729")
     st.markdown("---")
 
-    page = st.radio("功能导航", ["🏠 资产看板", "📝 交易明细", "🚀 交易与分析"])
+    st.markdown("##### 功能导航")
+    page = st.radio("功能导航", ["🏠 资产看板", "📝 交易明细", "🚀 深度分析 & 交易"], label_visibility="collapsed")
+
+    st.markdown("---")
+
+    auto_refresh = False
+    if page == "🏠 资产看板":
+        st.success("🟢 实时监控模式")
+        auto_refresh = st.toggle("⚡ 开启5秒自动刷新", value=False)
+        if st.button("🔄 立即刷新", use_container_width=True):
+            st.rerun()
+    else:
+        st.info("⏸️ 自动刷新已暂停")
+
+    st.markdown("---")
+    st.warning("⚠️ 数据管理")
+    if st.button("🗑️ 清空数据", use_container_width=True):
+        if os.path.exists(get_data_file_path(current_user)):
+            os.remove(get_data_file_path(current_user))
+        st.session_state.data = {"holdings": {}, "transactions": [], "asset_history": {}}
+        st.rerun()
 
     st.markdown("---")
     if st.button("🚪 退出登录", use_container_width=True):
@@ -175,53 +216,47 @@ with st.sidebar:
         st.session_state.data = None
         st.rerun()
 
-# --- 7. 页面逻辑 ---
+# --- 6. 页面逻辑 ---
 
 # ================= 页面 1: 资产看板 =================
 if page == "🏠 资产看板":
-    # 顶部标题栏
-    c1, c2 = st.columns([2, 1])
-    with c1:
+    col_title, col_status = st.columns([3, 1])
+    with col_title:
         st.title("资产看板")
-    with c2:
+    with col_status:
         if latest_update_time != "等待刷新...":
-            st.caption(f"更新: {latest_update_time}")
-            if st.button("🔄", key="refresh_btn"): st.rerun()
+            st.markdown(
+                f'<div style="text-align:right; padding-top:15px;"><span class="status-badge"><span class="status-dot"></span>更新: {latest_update_time}</span></div>',
+                unsafe_allow_html=True)
 
-    # 🔥 手机端优化：使用 2x2 布局显示指标，而不是一行4个
-    total_profit_all = total_assets - total_cost
-    total_rate = (total_profit_all / total_cost * 100) if total_cost > 0 else 0.0
-
-    # 第一行指标
-    m1, m2 = st.columns(2)
-    with m1:
-        st.metric("总资产", f"{total_assets:,.0f}")  # 去掉小数位，节省空间
-    with m2:
-        st.metric("今日收益", f"{today_profit:+,.0f}", delta_color="inverse")
-
-    # 第二行指标
-    m3, m4 = st.columns(2)
-    with m3:
-        st.metric("总收益", f"{total_profit_all:+,.0f}", delta_color="inverse")
-    with m4:
+    # 电脑端：一行4个；手机端：自动堆叠为4行
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("总资产", f"{total_assets:,.2f}")
+    with col2:
+        st.metric("今日收益", f"{today_profit:+,.2f}", delta_color="inverse", delta="今日变动")
+    with col3:
+        st.metric("持有收益", f"{total_profit_all:+,.2f}", delta_color="inverse")
+    with col4:
         st.metric("总收益率", f"{total_rate:+.2f}%", delta_color="inverse")
 
     st.divider()
 
-    st.subheader("📈 财富走势")
+    st.markdown("**📈 财富净值走势**")
     history_data = st.session_state.data['asset_history']
     if len(history_data) > 1:
         chart_df = pd.DataFrame(list(history_data.items()), columns=['日期', '总资产'])
         chart_df['日期'] = pd.to_datetime(chart_df['日期'])
         st.line_chart(chart_df.set_index('日期'), color="#e63946")
     else:
-        st.info("暂无历史数据")
+        st.info("📊 暂无历史数据")
 
-    st.subheader("📋 持仓明细")
+    st.markdown("**📋 持仓明细**")
     if holdings_list:
+        # 保持完整列，手机端 Streamlit 会自动提供横向滚动条
         df = pd.DataFrame(holdings_list)
-        # 🔥 手机端优化：只展示最关键的列
-        view_df = df[["名称", "市值", "今日", "收益率"]]
+        df.insert(0, '序号', range(1, 1 + len(df)))
+        view_df = df[["序号", "名称", "投入本金", "当前市值", "今日涨幅(%)", "今日收益", "持有收益", "持有收益率"]]
 
 
         def highlight(val):
@@ -230,100 +265,165 @@ if page == "🏠 资产看板":
             return f'color: {color}; font-weight: bold'
 
 
-        st.dataframe(
-            view_df.style.map(highlight, subset=["今日", "收益率"])
-            .format("{:,.0f}", subset=["市值", "今日"])  # 手机端去掉小数
-            .format("{:+.2f}%", subset=["收益率"]),
-            use_container_width=True,
-            hide_index=True
-        )
+        styled_df = view_df.style \
+            .map(highlight, subset=["今日收益", "持有收益", "持有收益率"]) \
+            .map(lambda x: highlight(float(x.replace('%', ''))), subset=["今日涨幅(%)"]) \
+            .format("{:,.2f}", subset=["投入本金", "当前市值", "今日收益", "持有收益"]) \
+            .format("{:+.2f}%", subset=["持有收益率"])
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
     else:
         st.caption("暂无持仓")
 
-    st.markdown('<div class="brand-watermark">抖音：绿豆生北国 (ID:32053858729)</div>', unsafe_allow_html=True)
+    if auto_refresh:
+        time.sleep(5)
+        st.rerun()
 
 # ================= 页面 2: 交易明细 =================
 elif page == "📝 交易明细":
-    st.title("交易流水")
+    st.title("交易流水账本")
     if st.session_state.data['transactions']:
         trans_df = pd.DataFrame(st.session_state.data['transactions'])
-        # 手机端精简列
-        show_trans = trans_df[['time', 'name', 'type', 'amount']]
-        st.dataframe(
-            show_trans,
-            use_container_width=True,
-            hide_index=True,
-            column_config={"time": "时间", "name": "名称", "type": "操作", "amount": "金额"}
-        )
+        filter_code = st.text_input("🔍 搜索交易记录", key="history_search")
+        if filter_code: trans_df = trans_df[trans_df['code'].str.contains(filter_code)]
+        st.dataframe(trans_df, use_container_width=True, hide_index=True)
     else:
-        st.info("暂无记录")
+        st.info("暂无交易记录")
 
-# ================= 页面 3: 交易与分析 =================
-elif page == "🚀 交易与分析":
-    st.title("交易柜台")
+# ================= 页面 3: 深度分析 & 交易 =================
+elif page == "🚀 深度分析 & 交易":
+    st.title("深度分析 & 交易柜台")
 
-    search_code = st.text_input("输入基金代码", placeholder="如 110011")
-    fund_info = None
+    # 电脑端：左右布局；手机端：自动上下堆叠
+    col_left, col_right = st.columns([1, 2])
 
-    if len(search_code) == 6:
-        with st.spinner("查找中..."):
-            fund_info = fund_core.get_fund_real_time_value(search_code)
+    with col_left:
+        with st.container(border=True):
+            st.markdown("#### 🕹 交易柜台")
+            search_code = st.text_input("输入代码", placeholder="如 110011")
 
-        if fund_info:
-            st.success(f"{fund_info['名称']}")
-            c_val, c_rate = st.columns(2)
-            with c_val:
-                st.metric("估值", fund_info['实时估算值'])
-            with c_rate:
-                st.metric("涨幅", fund_info['估算涨幅'], delta_color="inverse")
-        else:
-            st.error("❌ 未找到该代码")
+            fund_info = None
+            if len(search_code) == 6:
+                with st.spinner("查询中..."):
+                    fund_info = fund_core.get_fund_real_time_value(search_code)
 
-    st.divider()
-
-    tab1, tab2 = st.tabs(["买入", "卖出"])
-
-    with tab1:
-        buy_money = st.number_input("买入金额", step=100.0)
-        if st.button("确认买入", type="primary", use_container_width=True):
-            if fund_info and buy_money > 0:
-                price = float(fund_info['实时估算值'])
-                shares = buy_money / price
-                name = fund_info['名称']
-                if search_code in st.session_state.data['holdings']:
-                    st.session_state.data['holdings'][search_code]['shares'] += shares
-                    st.session_state.data['holdings'][search_code]['cost'] += buy_money
+                if fund_info:
+                    st.success(f"已锁定: {fund_info['名称']}")
+                    st.metric("实时估值", fund_info['实时估算值'], fund_info['估算涨幅'], delta_color="inverse")
                 else:
-                    st.session_state.data['holdings'][search_code] = {'name': name, 'shares': shares, 'cost': buy_money}
+                    st.error("❌ 查无此基")
 
-                rec = {"time": datetime.datetime.now().strftime("%m-%d %H:%M"), "type": "买入", "code": search_code,
-                       "name": name, "amount": buy_money}
-                st.session_state.data['transactions'].insert(0, rec)
-                save_data(current_user, st.session_state.data)
-                st.success("买入成功！")
-                time.sleep(1)
-                st.rerun()
+            st.divider()
 
-    with tab2:
-        my_codes = list(st.session_state.data['holdings'].keys())
-        if my_codes:
-            sell_code = st.selectbox("选择持仓", my_codes)
-            curr = st.session_state.data['holdings'][sell_code]
-            st.caption(f"持有: {curr['shares']:.2f} 份")
+            op_tab1, op_tab2 = st.tabs(["🔴 买入", "🟢 卖出"])
 
-            if st.button("全部卖出", type="primary", use_container_width=True):
-                # 简单处理：全部卖出
-                curr_info = fund_core.get_fund_real_time_value(sell_code)
-                price = float(curr_info['实时估算值']) if curr_info else 1.0
-                amount = curr['shares'] * price
+            with op_tab1:
+                buy_money = st.number_input("买入金额", step=100.0, key="buy_input")
+                if st.button("确认买入", use_container_width=True, type="primary"):
+                    if fund_info and buy_money > 0:
+                        price = float(fund_info['实时估算值'])
+                        shares = buy_money / price
+                        name = fund_info['名称']
+                        if search_code in st.session_state.data['holdings']:
+                            st.session_state.data['holdings'][search_code]['shares'] += shares
+                            st.session_state.data['holdings'][search_code]['cost'] += buy_money
+                        else:
+                            st.session_state.data['holdings'][search_code] = {'name': name, 'shares': shares,
+                                                                              'cost': buy_money}
 
-                del st.session_state.data['holdings'][sell_code]
-                rec = {"time": datetime.datetime.now().strftime("%m-%d %H:%M"), "type": "卖出", "code": sell_code,
-                       "name": curr['name'], "amount": amount}
-                st.session_state.data['transactions'].insert(0, rec)
-                save_data(current_user, st.session_state.data)
-                st.success("卖出成功！")
-                time.sleep(1)
-                st.rerun()
+                        rec = {"time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "type": "买入",
+                               "code": search_code, "name": name, "amount": buy_money}
+                        st.session_state.data['transactions'].insert(0, rec)
+                        save_data(current_user, st.session_state.data)
+                        st.success(f"买入成功！")
+                        time.sleep(1)
+                        st.rerun()
+
+            with op_tab2:
+                my_codes = list(st.session_state.data['holdings'].keys())
+                if my_codes:
+                    sell_code_select = st.selectbox("选择持仓", my_codes, key="sell_select")
+                    curr = st.session_state.data['holdings'][sell_code_select]
+                    curr_info = fund_core.get_fund_real_time_value(sell_code_select)
+                    curr_price = float(curr_info['实时估算值']) if curr_info else 0
+                    curr_val = curr['shares'] * curr_price
+                    st.caption(f"持仓: {curr['shares']:.2f} 份 | 市值: {curr_val:.2f} 元")
+
+                    sell_mode = st.radio("卖出方式", ["按金额", "按份额", "全部卖出"], horizontal=True)
+                    sell_shares = 0.0
+                    if sell_mode == "全部卖出":
+                        sell_shares = curr['shares']
+                    elif sell_mode == "按金额":
+                        sell_amount = st.number_input("卖出金额 (元)", min_value=0.0, max_value=curr_val)
+                        if curr_price > 0: sell_shares = sell_amount / curr_price
+                    elif sell_mode == "按份额":
+                        sell_shares = st.number_input("卖出份额", min_value=0.0, max_value=curr['shares'])
+
+                    if st.button("确认卖出", use_container_width=True):
+                        if sell_shares > 0:
+                            cost_reduce = curr['cost'] * (sell_shares / curr['shares'])
+                            curr['shares'] -= sell_shares
+                            curr['cost'] -= cost_reduce
+                            if curr['shares'] < 0.01: del st.session_state.data['holdings'][sell_code_select]
+
+                            rec = {"time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "type": "卖出",
+                                   "code": sell_code_select, "name": curr['name'], "amount": sell_shares * curr_price}
+                            st.session_state.data['transactions'].insert(0, rec)
+                            save_data(current_user, st.session_state.data)
+                            st.success("卖出成功！")
+                            time.sleep(1)
+                            st.rerun()
+                else:
+                    st.warning("暂无持仓可卖")
+
+    with col_right:
+        if len(search_code) == 6 and fund_info:
+            st.markdown(f"#### 📊 {fund_info['名称']} 深度分析")
+
+            with st.spinner("加载业绩走势..."):
+                chart_df = get_fund_history_data(search_code, days=30)
+                if chart_df is not None and not chart_df.empty:
+                    display_df = chart_df.copy()
+                    start_val = display_df['DWJZ'].iloc[0]
+                    display_df['本基金'] = (display_df['DWJZ'] - start_val) / start_val * 100
+                    total_change = display_df['本基金'].iloc[-1]
+
+                    col_rate, col_text = st.columns([1, 3])
+                    with col_rate:
+                        if total_change > 0:
+                            st.markdown(f'<div class="big-rate-up">+{total_change:.2f}%</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown(f'<div class="big-rate-down">{total_change:.2f}%</div>', unsafe_allow_html=True)
+                        st.caption("近1月涨跌幅")
+
+                    st.line_chart(display_df.set_index('FSRQ')['本基金'], color="#2979ff")
+
+                    st.divider()
+                    st.subheader("📜 历史净值列表")
+                    display_df['涨跌幅'] = display_df['DWJZ'].pct_change() * 100
+                    display_df['FSRQ_STR'] = display_df['FSRQ'].dt.strftime('%Y-%m-%d')
+                    show_df = display_df.sort_values('FSRQ', ascending=False)[['FSRQ_STR', '涨跌幅', 'DWJZ']]
+
+
+                    def color_v(val):
+                        c = 'red' if val > 0 else 'green'
+                        if val == 0: c = 'black'
+                        return f'color: {c}; font-weight: bold'
+
+
+                    st.dataframe(
+                        show_df.style.map(color_v, subset=['涨跌幅']).format("{:+.2f}%", subset=['涨跌幅']).format(
+                            "{:.4f}", subset=['DWJZ']),
+                        use_container_width=True, hide_index=True,
+                        column_config={"FSRQ_STR": "日期", "涨跌幅": "日涨跌幅", "DWJZ": "单位净值"}
+                    )
+                else:
+                    st.warning("暂无历史数据")
         else:
-            st.info("无持仓")
+            st.info("👈 请在左侧输入基金代码")
+
+# --- 7. 底部版权 ---
+st.markdown("""
+    <div class="brand-footer">
+        Designed by 抖音：<b>绿豆生北国</b> (ID: 32053858729)
+    </div>
+""", unsafe_allow_html=True)
